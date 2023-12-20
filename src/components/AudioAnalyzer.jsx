@@ -1,9 +1,12 @@
 import React, { useRef, useEffect } from "react";
 import * as Pitchfinder from "pitchfinder";
 
+const VALUES_TO_STORE = 60;
+const MAX_DRAWABLE_PITCH = 350;
+
 const AudioAnalyzer = () => {
   const canvasRef = useRef(null);
-  const pitches = useRef([]); // To store pitch values over time
+  const pitches = useRef(Array(VALUES_TO_STORE).fill(null));
   const requestRef = useRef(); // To store the requestAnimationFrame reference
 
   useEffect(() => {
@@ -18,17 +21,56 @@ const AudioAnalyzer = () => {
     if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const maxPitch = 350; // Maximum pitch for scaling
+
+    // Calculate y-coordinates for 170 Hz and 190 Hz
+    const y170Hz = (1 - 170 / maxPitch) * canvas.height;
+    const y190Hz = (1 - 190 / maxPitch) * canvas.height;
+
+    // Fill above 190 Hz with transparent pink
+    ctx.fillStyle = "rgba(255, 192, 203, 0.3)"; // Transparent pink color
+    ctx.fillRect(0, 0, canvas.width, y190Hz);
+
+    // Fill below 170 Hz with transparent blue
+    ctx.fillStyle = "rgba(173, 216, 230, 0.3)"; // Transparent blue color
+    ctx.fillRect(0, y170Hz, canvas.width, canvas.height - y170Hz);
+
+    // Draw permanent lines and labels at specific pitches
+    const specificPitches = [50, 100, 170, 190, 200, 250, 300];
+    ctx.font = "10px Arial"; // Font for the labels
+    ctx.fillStyle = "#666"; // Color for the labels
+
+    specificPitches.forEach((pitch) => {
+      const y = (1 - pitch / maxPitch) * canvas.height;
+
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(canvas.width, y);
+      ctx.strokeStyle = "#ddd"; // Light grey color for the lines
+      ctx.stroke();
+
+      ctx.fillText(`${pitch} Hz`, 5, y - 2); // Position the label slightly above the line
+    });
+
+    // Draw pitch data
     ctx.beginPath();
+    ctx.strokeStyle = "#000"; // Black color for the pitch data
+    let moveToNext = true;
 
     pitches.current.forEach((pitch, index) => {
-      const x = (index / 500) * canvas.width;
-      const y =
-        pitch === 0 ? canvas.height : (1 - pitch / 1000) * canvas.height;
+      if (pitch !== null) {
+        const x = (index / pitches.current.length) * canvas.width;
+        const y = (1 - pitch / maxPitch) * canvas.height;
 
-      if (index === 0) {
-        ctx.moveTo(x, y);
+        if (moveToNext) {
+          ctx.moveTo(x, y);
+          moveToNext = false;
+        } else {
+          ctx.lineTo(x, y);
+        }
       } else {
-        ctx.lineTo(x, y);
+        moveToNext = true;
       }
     });
 
@@ -51,7 +93,8 @@ const AudioAnalyzer = () => {
       source.connect(processor);
       processor.connect(audioContext.destination);
 
-      let lastNonNullPitch = 0; // Store the last non-null pitch
+      let lastNonNullPitch = null;
+      let nullCounter = 0; // Counter for nulls after a non-null pitch
 
       processor.onaudioprocess = function (e) {
         const inputBuffer = e.inputBuffer;
@@ -62,34 +105,24 @@ const AudioAnalyzer = () => {
         if (pitch !== null) {
           pitches.current.push(pitch);
           lastNonNullPitch = pitch;
+          nullCounter = 0;
         } else {
-          // Simple interpolation for smoothing null values
-          const nextNonNullPitch = findNextNonNullPitch(
-            pitches.current,
-            pitches.current.length,
-            lastNonNullPitch
-          );
-          const interpolatedPitch = (lastNonNullPitch + nextNonNullPitch) / 2;
-          pitches.current.push(interpolatedPitch);
+          if (nullCounter < 3 && lastNonNullPitch !== null) {
+            pitches.current.push(lastNonNullPitch);
+            nullCounter++;
+          } else {
+            pitches.current.push(null); // Once the counter exceeds 5, push null
+          }
         }
 
-        if (pitches.current.length > 500) {
+        // Keep the pitches array at a manageable size
+        if (pitches.current.length > VALUES_TO_STORE) {
           pitches.current.shift();
         }
       };
 
       requestRef.current = requestAnimationFrame(draw);
     }
-  };
-
-  // Helper function to find the next non-null pitch
-  const findNextNonNullPitch = (pitches, startIndex, fallbackPitch) => {
-    for (let i = startIndex; i < pitches.length; i++) {
-      if (pitches[i] !== null) {
-        return pitches[i];
-      }
-    }
-    return fallbackPitch; // If no non-null pitch is found, return the fallback pitch
   };
 
   return (
